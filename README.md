@@ -22,7 +22,7 @@ python -m pip install -r requirements.txt
 
 ```toml
 model_provider = "llm7proxy"
-model = "gpt-5.5"
+model = "default"
 
 [model_providers.llm7proxy]
 name = "LLM7 Python Proxy"
