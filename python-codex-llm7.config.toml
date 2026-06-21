@@ -1,0 +1,11 @@
+model_provider = "llm7proxy"
+model = "gpt-5.5"
+
+[model_providers.llm7proxy]
+name = "LLM7 Python Proxy"
+base_url = "http://127.0.0.1:5011/v1"
+env_key = "LLM7_API_KEY"
+wire_api = "responses"
+request_max_retries = 2
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
