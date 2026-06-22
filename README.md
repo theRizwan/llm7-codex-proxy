@@ -24,7 +24,7 @@ python -m pip install -r requirements.txt
 
 ```toml
 model_provider = "llm7proxy"
-model = "default"
+model = "gpt-5.5"
 
 [model_providers.llm7proxy]
 name = "LLM7 Python Proxy"
@@ -88,7 +88,7 @@ http://127.0.0.1:5011
 ```txt
 LLM7_API_KEY          LLM7 token. Defaults to unused.
 LLM7_BASE_URL         LLM7 base URL. Defaults to https://api.llm7.io/v1.
-LLM7_MODEL            Default model. Defaults to gpt-5.5.
+LLM7_MODEL            Upstream LLM7 model for GPT aliases. Defaults to default.
 PROXY_HOST            Local bind host. Defaults to 127.0.0.1.
 PROXY_PORT            Local bind port. Defaults to 5011.
 AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
@@ -96,3 +96,5 @@ LLM7_SAFE_MODE        Defaults to 1. Sends only LLM7-safe chat parameters upstre
 LLM7_EXTRA_BODY_PASSTHROUGH
                       Defaults to 0. Set to 1 only if your upstream supports extra OpenAI fields.
 ```
+
+Codex can use `model = "gpt-5.5"`, but the proxy sends GPT-style model aliases upstream as the LLM7 model in `LLM7_MODEL`. By default that upstream model is `default`, because many LLM7-compatible endpoints reject raw GPT model IDs with a 400.

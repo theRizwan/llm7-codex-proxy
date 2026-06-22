@@ -15,7 +15,8 @@ HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PROXY_PORT", "5011"))
 LLM7_BASE_URL = os.environ.get("LLM7_BASE_URL", "https://api.llm7.io/v1").rstrip("/")
 DEFAULT_MODEL = "gpt-5.5"
-LLM7_MODEL = os.environ.get("LLM7_MODEL", DEFAULT_MODEL)
+DEFAULT_LLM7_MODEL = "default"
+LLM7_MODEL = os.environ.get("LLM7_MODEL", DEFAULT_LLM7_MODEL)
 LLM7_API_KEY = os.environ.get("LLM7_API_KEY", "unused")
 AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
 LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
@@ -112,7 +113,7 @@ def now_unix():
 
 
 def upstream_model(model):
-    if not model:
+    if not model or str(model).startswith("gpt-"):
         return LLM7_MODEL
     return model
 
