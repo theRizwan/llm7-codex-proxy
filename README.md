@@ -96,8 +96,22 @@ AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
 LLM7_SAFE_MODE        Defaults to 1. Sends only LLM7-safe chat parameters upstream.
 LLM7_EXTRA_BODY_PASSTHROUGH
                       Defaults to 0. Set to 1 only if your upstream supports extra OpenAI fields.
+CODEX_PROXY_DEBUG     Defaults to 0. Set to 1 to save sanitized incoming/upstream JSON dumps.
+CODEX_PROXY_DEBUG_DIR Defaults to debug-dumps.
 ```
 
 Codex can use `model = "gpt-5.5"`, but the proxy sends GPT-style model aliases upstream as the LLM7 model in `LLM7_MODEL`. By default that upstream model is `default`, because many LLM7-compatible endpoints reject raw GPT model IDs with a 400.
 
 The proxy advertises common GPT/O/Codex dropdown aliases from `/v1/models`. Any alias that is not one of LLM7's native `default`, `fast`, or `pro` models is mapped upstream to `LLM7_MODEL`.
+
+## Debug Codex Requests
+
+To inspect what Codex is really sending to the proxy, run:
+
+```bat
+set CODEX_PROXY_DEBUG=1
+set LLM7_API_KEY=unused
+python llm7_codex_proxy.py
+```
+
+The proxy writes sanitized JSON captures to `debug-dumps/`. Do not publish these dumps because prompts and project context may still be present.

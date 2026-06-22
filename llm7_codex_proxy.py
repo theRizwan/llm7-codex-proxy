@@ -4,6 +4,7 @@ import time
 import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
 
 try:
@@ -27,6 +28,8 @@ LLM7_MODEL_ALIASES = tuple(
 AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
 LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
+CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "0").lower() in ("1", "true", "yes")
+CODEX_PROXY_DEBUG_DIR = Path(os.environ.get("CODEX_PROXY_DEBUG_DIR", "debug-dumps"))
 OPENAI_CLIENT = None
 
 LLM7_NATIVE_MODELS = ("default", "fast", "pro")
@@ -195,6 +198,37 @@ def to_plain_data(value):
     if isinstance(value, dict):
         return value
     return json.loads(json.dumps(value, default=lambda obj: getattr(obj, "__dict__", str(obj))))
+
+
+def redact_debug_value(value):
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if any(word in key_text for word in ("authorization", "api_key", "apikey", "token", "secret", "password")):
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = redact_debug_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_debug_value(item) for item in value]
+    return value
+
+
+def debug_dump(label, data):
+    if not CODEX_PROXY_DEBUG:
+        return
+    try:
+        CODEX_PROXY_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"{stamp}-{uuid.uuid4().hex[:8]}-{label}.json"
+        path = CODEX_PROXY_DEBUG_DIR / filename
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(redact_debug_value(data), handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        print(f"Debug dump wrote {path}")
+    except Exception as exc:
+        print(f"Debug dump failed: {exc}")
 
 
 def json_response(handler, status, data):
@@ -576,6 +610,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             return json_response(self, 400, {"error": {"message": f"Invalid JSON: {exc}"}})
 
+        debug_dump(
+            "incoming",
+            {
+                "path": self.path,
+                "body": body,
+                "summary": {
+                    "model": body.get("model"),
+                    "input_items": len(body.get("input") or []) if isinstance(body.get("input"), list) else None,
+                    "messages": len(body.get("messages") or []) if isinstance(body.get("messages"), list) else None,
+                    "tools": len(body.get("tools") or []) if isinstance(body.get("tools"), list) else None,
+                    "stream": body.get("stream"),
+                },
+            },
+        )
+
         if self.path in ("/chat/completions", "/v1/chat/completions"):
             return self.handle_chat_completions(body)
 
@@ -594,6 +643,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
 
         payload = build_chat_payload(body)
+        debug_dump("upstream-chat-payload", payload)
 
         sse_headers(self)
         try:
@@ -617,6 +667,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
 
         payload = build_responses_chat_payload(body)
+        debug_dump("upstream-responses-payload", payload)
 
         response_id = f"resp_{uuid.uuid4().hex}"
         message_id = f"msg_{uuid.uuid4().hex}"
