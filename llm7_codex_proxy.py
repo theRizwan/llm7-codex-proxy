@@ -32,7 +32,7 @@ LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "fal
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 LLM7_TEXT_TOOL_FALLBACK = os.environ.get("LLM7_TEXT_TOOL_FALLBACK", "1").lower() not in ("0", "false", "no")
 LLM7_FORCE_COMMAND_FALLBACK = os.environ.get("LLM7_FORCE_COMMAND_FALLBACK", "1").lower() not in ("0", "false", "no")
-CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "0").lower() in ("1", "true", "yes")
+CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "1").lower() not in ("0", "false", "no")
 CODEX_PROXY_DEBUG_DIR = Path(os.environ.get("CODEX_PROXY_DEBUG_DIR", "debug-dumps"))
 OPENAI_CLIENT = None
 

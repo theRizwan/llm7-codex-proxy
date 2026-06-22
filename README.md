@@ -104,7 +104,7 @@ LLM7_TEXT_TOOL_FALLBACK
                       Defaults to 1. Converts JSON text tool calls into real Codex function calls.
 LLM7_FORCE_COMMAND_FALLBACK
                       Defaults to 1. If the model promises action but emits no tool call, starts with a safe command-tool inspection.
-CODEX_PROXY_DEBUG     Defaults to 0. Set to 1 to save sanitized incoming/upstream JSON dumps.
+CODEX_PROXY_DEBUG     Defaults to 1. Set to 0 to disable sanitized incoming/upstream JSON dumps.
 CODEX_PROXY_DEBUG_DIR Defaults to debug-dumps.
 ```
 
@@ -114,12 +114,12 @@ The proxy advertises common GPT/O/Codex dropdown aliases from `/v1/models`. Any 
 
 ## Debug Codex Requests
 
-To inspect what Codex is really sending to the proxy, run:
+The proxy writes sanitized JSON captures to `debug-dumps/` by default. To disable dumps, run:
 
 ```bat
-set CODEX_PROXY_DEBUG=1
+set CODEX_PROXY_DEBUG=0
 set LLM7_API_KEY=unused
 python llm7_codex_proxy.py
 ```
 
-The proxy writes sanitized JSON captures to `debug-dumps/`. Do not publish these dumps because prompts and project context may still be present.
+Do not publish these dumps because prompts and project context may still be present.
