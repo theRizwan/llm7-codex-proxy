@@ -34,6 +34,7 @@ LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "fal
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 LLM7_TEXT_TOOL_FALLBACK = os.environ.get("LLM7_TEXT_TOOL_FALLBACK", "1").lower() not in ("0", "false", "no")
 LLM7_FORCE_COMMAND_FALLBACK = os.environ.get("LLM7_FORCE_COMMAND_FALLBACK", "1").lower() not in ("0", "false", "no")
+LLM7_ALLOW_PARALLEL_TOOL_CALLS = os.environ.get("LLM7_ALLOW_PARALLEL_TOOL_CALLS", "0").lower() in ("1", "true", "yes")
 LLM7_STREAM_IDLE_TIMEOUT = float(os.environ.get("LLM7_STREAM_IDLE_TIMEOUT", "45"))
 CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "1").lower() not in ("0", "false", "no")
 CODEX_PROXY_DEBUG_DIR = Path(os.environ.get("CODEX_PROXY_DEBUG_DIR", "debug-dumps"))
@@ -405,6 +406,9 @@ def build_agentic_tool_prompt(tools):
         "Do not describe a tool call in prose. Emit a real function/tool call using exactly one of the available tool names.",
         "Never invent tool names. For example, do not say you will use apply_patch unless apply_patch is listed below.",
         "If you need to create or edit files, use the listed tool that can run commands or modify files.",
+        "Call only one tool at a time for dependent filesystem work. Wait for mkdir/cd/list output before writing files inside that directory.",
+        "Prefer apply_patch for creating or editing files when it is available.",
+        "If using exec_command on Windows PowerShell, use commands like `pwd; dir`; do not use `&&` or `ls -la`.",
         "Available tool names: " + ", ".join(shown_names) + (f", and {remaining} more" if remaining else ""),
     ]
     if AGENTIC_TOOL_PROMPT_DESCRIPTIONS:
@@ -503,7 +507,7 @@ def forced_command_tool_call(text, tool_names):
     name = command_tool_name(tool_names)
     if not name:
         return None
-    command = "pwd && ls -la"
+    command = "pwd; dir"
     return {"name": name, "arguments": command_tool_arguments(name, command)}
 
 
@@ -637,6 +641,8 @@ def build_chat_payload(body):
     for key in passthrough_keys:
         if key in body:
             payload[key] = body[key]
+    if "tools" in payload:
+        payload["parallel_tool_calls"] = bool(body.get("parallel_tool_calls")) if LLM7_ALLOW_PARALLEL_TOOL_CALLS else False
     if "tools" in payload and "tool_choice" not in payload:
         payload["tool_choice"] = "auto"
     extra_body = extra_body_from(body, CHAT_RESERVED_KEYS) if LLM7_EXTRA_BODY_PASSTHROUGH else {}
@@ -655,12 +661,13 @@ def build_responses_chat_payload(body):
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = responses_tool_choice_to_chat_tool_choice(body.get("tool_choice", "auto"))
+        payload["parallel_tool_calls"] = bool(body.get("parallel_tool_calls")) if LLM7_ALLOW_PARALLEL_TOOL_CALLS else False
     for response_key, chat_key in RESPONSES_TO_CHAT_KEYS.items():
         if response_key in body:
             payload[chat_key] = body[response_key]
     passthrough_keys = LLM7_SAFE_RESPONSES_CHAT_KEYS if LLM7_SAFE_MODE else RESPONSES_DIRECT_CHAT_KEYS
     for key in passthrough_keys:
-        if key in body and key not in ("tool_choice", "truncation"):
+        if key in body and key not in ("tool_choice", "truncation", "parallel_tool_calls"):
             payload[key] = body[key]
     extra_body = extra_body_from(body, RESPONSES_RESERVED_KEYS) if LLM7_EXTRA_BODY_PASSTHROUGH else {}
     if extra_body and not LLM7_SAFE_MODE:
