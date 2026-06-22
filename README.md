@@ -104,6 +104,8 @@ LLM7_TEXT_TOOL_FALLBACK
                       Defaults to 1. Converts JSON text tool calls into real Codex function calls.
 LLM7_FORCE_COMMAND_FALLBACK
                       Defaults to 1. If the model promises action but emits no tool call, starts with a safe command-tool inspection.
+LLM7_STREAM_IDLE_TIMEOUT
+                      Defaults to 45 seconds. Stops waiting when LLM7 streaming goes quiet.
 CODEX_PROXY_DEBUG     Defaults to 1. Set to 0 to disable sanitized incoming/upstream JSON dumps.
 CODEX_PROXY_DEBUG_DIR Defaults to debug-dumps.
 ```

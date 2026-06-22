@@ -1,5 +1,7 @@
 import json
 import os
+import queue
+import threading
 import time
 import traceback
 import uuid
@@ -32,6 +34,7 @@ LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "fal
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 LLM7_TEXT_TOOL_FALLBACK = os.environ.get("LLM7_TEXT_TOOL_FALLBACK", "1").lower() not in ("0", "false", "no")
 LLM7_FORCE_COMMAND_FALLBACK = os.environ.get("LLM7_FORCE_COMMAND_FALLBACK", "1").lower() not in ("0", "false", "no")
+LLM7_STREAM_IDLE_TIMEOUT = float(os.environ.get("LLM7_STREAM_IDLE_TIMEOUT", "45"))
 CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "1").lower() not in ("0", "false", "no")
 CODEX_PROXY_DEBUG_DIR = Path(os.environ.get("CODEX_PROXY_DEBUG_DIR", "debug-dumps"))
 OPENAI_CLIENT = None
@@ -282,6 +285,33 @@ def write_chat_error(handler, model, message):
 
 def llm7_stream(payload):
     return openai_client().chat.completions.create(**payload)
+
+
+def iter_llm7_events(payload):
+    events = queue.Queue()
+
+    def worker():
+        try:
+            for event in llm7_stream(payload):
+                events.put(("event", event))
+            events.put(("done", None))
+        except Exception as exc:
+            events.put(("error", exc))
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    while True:
+        try:
+            kind, value = events.get(timeout=LLM7_STREAM_IDLE_TIMEOUT)
+        except queue.Empty:
+            raise TimeoutError(f"LLM7 stream idle for {LLM7_STREAM_IDLE_TIMEOUT:g}s")
+        if kind == "event":
+            yield value
+            continue
+        if kind == "done":
+            return
+        raise value
 
 
 def log_upstream_exception(exc):
@@ -745,7 +775,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         sse_headers(self)
         try:
-            for event in llm7_stream(payload):
+            for event in iter_llm7_events(payload):
                 write_sse(self, to_plain_data(event))
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
@@ -788,7 +818,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
 
         try:
-            for raw_event in llm7_stream(payload):
+            for raw_event in iter_llm7_events(payload):
                 event = to_plain_data(raw_event)
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
@@ -954,6 +984,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.finish_response(response_id, model, message_id, "".join(output_text), output_items, tool_names)
                 self.close_connection = True
                 return
+            if tool_names:
+                self.finish_response(response_id, model, message_id, "", output_items, tool_names)
+                self.close_connection = True
+                return
             response_event(
                 self,
                 "response.failed",
@@ -971,7 +1005,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def finish_response(self, response_id, model, message_id, text, output_items, tool_names=None):
-        parsed_tool_call = parse_text_tool_call(text, tool_names or []) or forced_command_tool_call(text, tool_names or [])
+        fallback_text = text or "I will inspect the project."
+        parsed_tool_call = parse_text_tool_call(text, tool_names or []) or forced_command_tool_call(fallback_text, tool_names or [])
         if parsed_tool_call:
             call_id = f"call_{uuid.uuid4().hex}"
             function_item = {
