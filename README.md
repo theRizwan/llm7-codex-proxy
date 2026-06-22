@@ -116,6 +116,8 @@ Codex can use `model = "gpt-5.5"`, but the proxy sends GPT-style model aliases u
 
 The proxy advertises common GPT/O/Codex dropdown aliases from `/v1/models`. Any alias that is not one of LLM7's native `default`, `fast`, or `pro` models is mapped upstream to `LLM7_MODEL`.
 
+For Windows stability, standalone `cd ...` command tool calls are rewritten into a one-shot PowerShell `Set-Location ...; Get-Location; Get-ChildItem` command with a reminder that future calls must use `workdir`.
+
 ## Debug Codex Requests
 
 The proxy writes sanitized JSON captures to `debug-dumps/` by default, including incoming Codex requests, upstream LLM7 payloads, and outgoing model/tool-call decisions. To disable dumps, run:

@@ -1,6 +1,7 @@
 import json
 import os
 import queue
+import re
 import threading
 import time
 import traceback
@@ -408,6 +409,7 @@ def build_agentic_tool_prompt(tools):
         "If you need to create or edit files, use the listed tool that can run commands or modify files.",
         "Call only one tool at a time for dependent filesystem work. Wait for mkdir/cd/list output before writing files inside that directory.",
         "Prefer apply_patch for creating or editing files when it is available.",
+        "Do not call `cd` by itself. Each exec_command is a fresh process; use the exec_command `workdir` argument for later commands.",
         "If using exec_command on Windows PowerShell, use commands like `pwd; dir`; do not use `&&` or `ls -la`.",
         "Available tool names: " + ", ".join(shown_names) + (f", and {remaining} more" if remaining else ""),
     ]
@@ -509,6 +511,56 @@ def forced_command_tool_call(text, tool_names):
         return None
     command = "pwd; dir"
     return {"name": name, "arguments": command_tool_arguments(name, command)}
+
+
+def decode_arguments(arguments):
+    if isinstance(arguments, dict):
+        return arguments
+    if not isinstance(arguments, str) or not arguments.strip():
+        return {}
+    try:
+        value = json.loads(arguments)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def encode_arguments(arguments):
+    return json.dumps(arguments, separators=(",", ":"))
+
+
+def powershell_single_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def normalize_command_arguments(tool_name_value, arguments):
+    lowered = tool_name_value.lower()
+    if not (tool_name_value == "exec_command" or "command" in lowered or "shell" in lowered or "terminal" in lowered or "exec" in lowered):
+        return arguments
+
+    data = decode_arguments(arguments)
+    if not data:
+        return arguments
+    command_key = "cmd" if "cmd" in data else "command" if "command" in data else None
+    if not command_key:
+        return arguments
+
+    command = str(data.get(command_key) or "").strip()
+    cd_match = re.fullmatch(r"(?:cd|chdir|Set-Location)(?:\\s+(?:-LiteralPath\\s+)?)?(.+)", command, flags=re.IGNORECASE)
+    if cd_match:
+        target = cd_match.group(1).strip().strip('"')
+        data[command_key] = (
+            f"Set-Location -LiteralPath {powershell_single_quote(target)}; "
+            "Write-Output 'NOTE: directory changes do not persist between exec_command calls; set the workdir field on later calls.'; "
+            "Get-Location; Get-ChildItem"
+        )
+    return encode_arguments(data)
+
+
+def normalize_tool_call_item(item):
+    normalized = dict(item)
+    normalized["arguments"] = normalize_command_arguments(normalized.get("name", ""), normalized.get("arguments", ""))
+    return normalized
 
 
 def responses_input_to_messages(request_body):
@@ -926,6 +978,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                 "arguments": acc["arguments"],
                                 "status": "completed",
                             }
+                            function_item = normalize_tool_call_item(function_item)
                             debug_dump("outgoing-tool-call", function_item)
                             response_event(
                                 self,
@@ -934,7 +987,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                     "type": "response.function_call_arguments.done",
                                     "item_id": call_id,
                                     "output_index": index,
-                                    "arguments": acc["arguments"],
+                                    "arguments": function_item["arguments"],
                                 },
                             )
                             response_event(
@@ -965,6 +1018,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         "arguments": acc["arguments"],
                         "status": "completed",
                     }
+                    function_item = normalize_tool_call_item(function_item)
                     debug_dump("outgoing-tool-call-after-error", function_item)
                     response_event(
                         self,
@@ -973,7 +1027,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                             "type": "response.function_call_arguments.done",
                             "item_id": call_id,
                             "output_index": index,
-                            "arguments": acc["arguments"],
+                            "arguments": function_item["arguments"],
                         },
                     )
                     response_event(
@@ -1035,6 +1089,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "arguments": parsed_tool_call["arguments"],
                 "status": "completed",
             }
+            function_item = normalize_tool_call_item(function_item)
             debug_dump("outgoing-tool-call-fallback", {"source_text": text, "item": function_item})
             response_event(
                 self,
@@ -1056,7 +1111,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "type": "response.function_call_arguments.delta",
                     "item_id": call_id,
                     "output_index": 0,
-                    "delta": parsed_tool_call["arguments"],
+                    "delta": function_item["arguments"],
                 },
             )
             response_event(
@@ -1066,7 +1121,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "type": "response.function_call_arguments.done",
                     "item_id": call_id,
                     "output_index": 0,
-                    "arguments": parsed_tool_call["arguments"],
+                    "arguments": function_item["arguments"],
                 },
             )
             response_event(
