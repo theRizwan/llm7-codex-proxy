@@ -92,4 +92,7 @@ LLM7_MODEL            Default model. Defaults to gpt-5.5.
 PROXY_HOST            Local bind host. Defaults to 127.0.0.1.
 PROXY_PORT            Local bind port. Defaults to 5011.
 AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
+LLM7_SAFE_MODE        Defaults to 1. Sends only LLM7-safe chat parameters upstream.
+LLM7_EXTRA_BODY_PASSTHROUGH
+                      Defaults to 0. Set to 1 only if your upstream supports extra OpenAI fields.
 ```

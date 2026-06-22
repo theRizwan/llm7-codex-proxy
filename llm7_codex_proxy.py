@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -17,6 +18,8 @@ DEFAULT_MODEL = "gpt-5.5"
 LLM7_MODEL = os.environ.get("LLM7_MODEL", DEFAULT_MODEL)
 LLM7_API_KEY = os.environ.get("LLM7_API_KEY", "unused")
 AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
+LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
+LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 OPENAI_CLIENT = None
 
 CHAT_PASSTHROUGH_KEYS = (
@@ -68,6 +71,31 @@ RESPONSES_DIRECT_CHAT_KEYS = (
     "tool_choice",
     "top_p",
     "truncation",
+    "user",
+)
+
+LLM7_SAFE_CHAT_KEYS = (
+    "frequency_penalty",
+    "max_completion_tokens",
+    "max_tokens",
+    "parallel_tool_calls",
+    "presence_penalty",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p",
+    "user",
+)
+
+LLM7_SAFE_RESPONSES_CHAT_KEYS = (
+    "frequency_penalty",
+    "parallel_tool_calls",
+    "presence_penalty",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "top_p",
     "user",
 )
 
@@ -159,6 +187,11 @@ def write_chat_error(handler, model, message):
 
 def llm7_stream(payload):
     return openai_client().chat.completions.create(**payload)
+
+
+def log_upstream_exception(exc):
+    print("LLM7 request failed:")
+    traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
 def content_to_text(value):
@@ -381,13 +414,14 @@ def build_chat_payload(body):
         "messages": body.get("messages", []),
         "stream": True,
     }
-    for key in CHAT_PASSTHROUGH_KEYS:
+    passthrough_keys = LLM7_SAFE_CHAT_KEYS if LLM7_SAFE_MODE else CHAT_PASSTHROUGH_KEYS
+    for key in passthrough_keys:
         if key in body:
             payload[key] = body[key]
     if "tools" in payload and "tool_choice" not in payload:
         payload["tool_choice"] = "auto"
-    extra_body = extra_body_from(body, CHAT_RESERVED_KEYS)
-    if extra_body:
+    extra_body = extra_body_from(body, CHAT_RESERVED_KEYS) if LLM7_EXTRA_BODY_PASSTHROUGH else {}
+    if extra_body and not LLM7_SAFE_MODE:
         payload["extra_body"] = extra_body
     return payload
 
@@ -405,11 +439,12 @@ def build_responses_chat_payload(body):
     for response_key, chat_key in RESPONSES_TO_CHAT_KEYS.items():
         if response_key in body:
             payload[chat_key] = body[response_key]
-    for key in RESPONSES_DIRECT_CHAT_KEYS:
+    passthrough_keys = LLM7_SAFE_RESPONSES_CHAT_KEYS if LLM7_SAFE_MODE else RESPONSES_DIRECT_CHAT_KEYS
+    for key in passthrough_keys:
         if key in body and key not in ("tool_choice", "truncation"):
             payload[key] = body[key]
-    extra_body = extra_body_from(body, RESPONSES_RESERVED_KEYS)
-    if extra_body:
+    extra_body = extra_body_from(body, RESPONSES_RESERVED_KEYS) if LLM7_EXTRA_BODY_PASSTHROUGH else {}
+    if extra_body and not LLM7_SAFE_MODE:
         payload["extra_body"] = extra_body
     return payload
 
@@ -511,6 +546,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
         except Exception as exc:
+            log_upstream_exception(exc)
             write_chat_error(self, model, f"LLM7 request failed: {exc}")
             self.close_connection = True
 
@@ -672,6 +708,45 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.finish_response(response_id, model, message_id, "".join(output_text), output_items)
             self.close_connection = True
         except Exception as exc:
+            log_upstream_exception(exc)
+            if tool_calls:
+                for index, acc in tool_calls.items():
+                    call_id = acc["id"] or f"call_{uuid.uuid4().hex}"
+                    function_item = {
+                        "type": "function_call",
+                        "id": call_id,
+                        "call_id": call_id,
+                        "name": acc["name"] or "unknown_tool",
+                        "arguments": acc["arguments"],
+                        "status": "completed",
+                    }
+                    response_event(
+                        self,
+                        "response.function_call_arguments.done",
+                        {
+                            "type": "response.function_call_arguments.done",
+                            "item_id": call_id,
+                            "output_index": index,
+                            "arguments": acc["arguments"],
+                        },
+                    )
+                    response_event(
+                        self,
+                        "response.output_item.done",
+                        {
+                            "type": "response.output_item.done",
+                            "output_index": index,
+                            "item": function_item,
+                        },
+                    )
+                    output_items.append(function_item)
+                self.finish_completed(response_id, model, output_items)
+                self.close_connection = True
+                return
+            if output_text:
+                self.finish_response(response_id, model, message_id, "".join(output_text), output_items)
+                self.close_connection = True
+                return
             response_event(
                 self,
                 "response.failed",
