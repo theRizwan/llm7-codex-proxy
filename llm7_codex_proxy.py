@@ -28,6 +28,7 @@ LLM7_MODEL_ALIASES = tuple(
 AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
 LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
+LLM7_TEXT_TOOL_FALLBACK = os.environ.get("LLM7_TEXT_TOOL_FALLBACK", "1").lower() not in ("0", "false", "no")
 CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "0").lower() in ("1", "true", "yes")
 CODEX_PROXY_DEBUG_DIR = Path(os.environ.get("CODEX_PROXY_DEBUG_DIR", "debug-dumps"))
 OPENAI_CLIENT = None
@@ -365,6 +366,9 @@ def build_agentic_tool_prompt(tools):
         "You are running inside an agentic coding app. The app can access the user's project files and can run tools when you call them.",
         "Do not say you cannot access the project or tools just because you cannot access them directly in natural language.",
         "When file inspection, terminal commands, edits, or other actions are needed, call the available tool instead of refusing.",
+        "Do not describe a tool call in prose. Emit a real function/tool call using exactly one of the available tool names.",
+        "Never invent tool names. For example, do not say you will use apply_patch unless apply_patch is listed below.",
+        "If you need to create or edit files, use the listed tool that can run commands or modify files.",
         "Available tools:",
     ]
     for tool in tools:
@@ -377,6 +381,55 @@ def build_agentic_tool_prompt(tools):
         else:
             lines.append(f"- {name}")
     return "\n".join(lines)
+
+
+def available_tool_names(tools):
+    names = []
+    for tool in tools or []:
+        name = tool_name(tool)
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def parse_text_tool_call(text, tool_names):
+    if not LLM7_TEXT_TOOL_FALLBACK or not text or not tool_names:
+        return None
+
+    candidates = [text.strip()]
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            stripped = part.strip()
+            if stripped.startswith("json"):
+                stripped = stripped[4:].strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                candidates.append(stripped)
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        name = data.get("name") or data.get("tool") or data.get("tool_name")
+        arguments = data.get("arguments")
+        if name is None and isinstance(data.get("function"), dict):
+            function = data["function"]
+            name = function.get("name")
+            arguments = function.get("arguments", arguments)
+
+        if name not in tool_names:
+            continue
+        if arguments is None:
+            arguments = {key: value for key, value in data.items() if key not in ("name", "tool", "tool_name", "function")}
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, separators=(",", ":"))
+        return {"name": name, "arguments": arguments}
+
+    return None
 
 
 def responses_input_to_messages(request_body):
@@ -674,6 +727,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         output_text = []
         output_items = []
         tool_calls = {}
+        tool_names = available_tool_names(body.get("tools") or [])
         tool_items_added = set()
         message_item_added = False
         content_part_added = False
@@ -813,7 +867,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         self.finish_completed(response_id, model, output_items)
                         self.close_connection = True
                         return
-            self.finish_response(response_id, model, message_id, "".join(output_text), output_items)
+            self.finish_response(response_id, model, message_id, "".join(output_text), output_items, tool_names)
             self.close_connection = True
         except Exception as exc:
             log_upstream_exception(exc)
@@ -852,7 +906,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 self.close_connection = True
                 return
             if output_text:
-                self.finish_response(response_id, model, message_id, "".join(output_text), output_items)
+                self.finish_response(response_id, model, message_id, "".join(output_text), output_items, tool_names)
                 self.close_connection = True
                 return
             response_event(
@@ -871,7 +925,64 @@ class ProxyHandler(BaseHTTPRequestHandler):
             )
             self.close_connection = True
 
-    def finish_response(self, response_id, model, message_id, text, output_items):
+    def finish_response(self, response_id, model, message_id, text, output_items, tool_names=None):
+        parsed_tool_call = parse_text_tool_call(text, tool_names or [])
+        if parsed_tool_call:
+            call_id = f"call_{uuid.uuid4().hex}"
+            function_item = {
+                "type": "function_call",
+                "id": call_id,
+                "call_id": call_id,
+                "name": parsed_tool_call["name"],
+                "arguments": parsed_tool_call["arguments"],
+                "status": "completed",
+            }
+            response_event(
+                self,
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        **function_item,
+                        "arguments": "",
+                        "status": "in_progress",
+                    },
+                },
+            )
+            response_event(
+                self,
+                "response.function_call_arguments.delta",
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": call_id,
+                    "output_index": 0,
+                    "delta": parsed_tool_call["arguments"],
+                },
+            )
+            response_event(
+                self,
+                "response.function_call_arguments.done",
+                {
+                    "type": "response.function_call_arguments.done",
+                    "item_id": call_id,
+                    "output_index": 0,
+                    "arguments": parsed_tool_call["arguments"],
+                },
+            )
+            response_event(
+                self,
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": function_item,
+                },
+            )
+            output_items.append(function_item)
+            self.finish_completed(response_id, model, output_items)
+            return
+
         if text:
             message_item = {
                 "type": "message",

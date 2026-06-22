@@ -96,6 +96,8 @@ AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
 LLM7_SAFE_MODE        Defaults to 1. Sends only LLM7-safe chat parameters upstream.
 LLM7_EXTRA_BODY_PASSTHROUGH
                       Defaults to 0. Set to 1 only if your upstream supports extra OpenAI fields.
+LLM7_TEXT_TOOL_FALLBACK
+                      Defaults to 1. Converts JSON text tool calls into real Codex function calls.
 CODEX_PROXY_DEBUG     Defaults to 0. Set to 1 to save sanitized incoming/upstream JSON dumps.
 CODEX_PROXY_DEBUG_DIR Defaults to debug-dumps.
 ```
