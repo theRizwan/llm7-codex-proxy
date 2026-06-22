@@ -4,3 +4,4 @@ __pycache__/
 .env
 .env.*
 debug-dumps/
+debug-dumps*.zip
