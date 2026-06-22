@@ -8,6 +8,8 @@ It uses the OpenAI Python SDK with `base_url` pointed at LLM7:
 Codex app -> /v1/responses -> local proxy -> OpenAI SDK -> LLM7
 ```
 
+The proxy translates Codex Responses API requests into LLM7 chat completions, preserves tool definitions, streams function-call argument events back to Codex, and adds a small agentic tool hint so the model knows project/tool access happens through the app.
+
 ## Setup
 
 Requires Python 3.10+.
@@ -79,4 +81,15 @@ The local server runs at:
 
 ```txt
 http://127.0.0.1:5011
+```
+
+## Options
+
+```txt
+LLM7_API_KEY          LLM7 token. Defaults to unused.
+LLM7_BASE_URL         LLM7 base URL. Defaults to https://api.llm7.io/v1.
+LLM7_MODEL            Default model. Defaults to gpt-5.5.
+PROXY_HOST            Local bind host. Defaults to 127.0.0.1.
+PROXY_PORT            Local bind port. Defaults to 5011.
+AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
 ```

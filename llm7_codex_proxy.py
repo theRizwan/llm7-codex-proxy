@@ -16,6 +16,7 @@ LLM7_BASE_URL = os.environ.get("LLM7_BASE_URL", "https://api.llm7.io/v1").rstrip
 DEFAULT_MODEL = "gpt-5.5"
 LLM7_MODEL = os.environ.get("LLM7_MODEL", DEFAULT_MODEL)
 LLM7_API_KEY = os.environ.get("LLM7_API_KEY", "unused")
+AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
 OPENAI_CLIENT = None
 
 CHAT_PASSTHROUGH_KEYS = (
@@ -216,8 +217,50 @@ def content_to_chat_content(value):
     return "\n".join(text_parts)
 
 
+def tool_name(tool):
+    if not isinstance(tool, dict):
+        return ""
+    if tool.get("type") == "function":
+        function = tool.get("function") or {}
+        return tool.get("name") or function.get("name") or ""
+    return tool.get("name") or tool.get("type") or ""
+
+
+def tool_description(tool):
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function") or {}
+    return tool.get("description") or function.get("description") or ""
+
+
+def build_agentic_tool_prompt(tools):
+    if not tools or not AGENTIC_TOOL_PROMPT:
+        return None
+
+    lines = [
+        "You are running inside an agentic coding app. The app can access the user's project files and can run tools when you call them.",
+        "Do not say you cannot access the project or tools just because you cannot access them directly in natural language.",
+        "When file inspection, terminal commands, edits, or other actions are needed, call the available tool instead of refusing.",
+        "Available tools:",
+    ]
+    for tool in tools:
+        name = tool_name(tool)
+        if not name:
+            continue
+        description = tool_description(tool)
+        if description:
+            lines.append(f"- {name}: {description}")
+        else:
+            lines.append(f"- {name}")
+    return "\n".join(lines)
+
+
 def responses_input_to_messages(request_body):
     messages = []
+    tool_prompt = build_agentic_tool_prompt(request_body.get("tools") or [])
+    if tool_prompt:
+        messages.append({"role": "system", "content": tool_prompt})
+
     instructions = request_body.get("instructions")
     if isinstance(instructions, str) and instructions.strip():
         messages.append({"role": "system", "content": instructions})
@@ -375,6 +418,22 @@ def response_event(handler, event, data):
     write_sse(handler, data, event=event)
 
 
+def base_response(response_id, model, status="in_progress", output=None, error=None):
+    response = {
+        "id": response_id,
+        "object": "response",
+        "created_at": now_unix(),
+        "status": status,
+        "model": model,
+        "output": output or [],
+        "parallel_tool_calls": True,
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+    }
+    if error:
+        response["error"] = error
+    return response
+
+
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -467,8 +526,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         payload = build_responses_chat_payload(body)
 
         response_id = f"resp_{uuid.uuid4().hex}"
+        message_id = f"msg_{uuid.uuid4().hex}"
         output_text = []
+        output_items = []
         tool_calls = {}
+        tool_items_added = set()
+        message_item_added = False
+        content_part_added = False
 
         sse_headers(self)
         response_event(
@@ -476,12 +540,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             "response.created",
             {
                 "type": "response.created",
-                "response": {
-                    "id": response_id,
-                    "object": "response",
-                    "status": "in_progress",
-                    "model": model,
-                },
+                "response": base_response(response_id, model),
             },
         )
 
@@ -492,13 +551,43 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     delta = choice.get("delta") or {}
                     content = delta.get("content")
                     if content:
+                        if not message_item_added:
+                            message_item_added = True
+                            response_event(
+                                self,
+                                "response.output_item.added",
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": 0,
+                                    "item": {
+                                        "type": "message",
+                                        "id": message_id,
+                                        "status": "in_progress",
+                                        "role": "assistant",
+                                        "content": [],
+                                    },
+                                },
+                            )
+                        if not content_part_added:
+                            content_part_added = True
+                            response_event(
+                                self,
+                                "response.content_part.added",
+                                {
+                                    "type": "response.content_part.added",
+                                    "item_id": message_id,
+                                    "output_index": 0,
+                                    "content_index": 0,
+                                    "part": {"type": "output_text", "text": ""},
+                                },
+                            )
                         output_text.append(content)
                         response_event(
                             self,
                             "response.output_text.delta",
                             {
                                 "type": "response.output_text.delta",
-                                "item_id": "msg_0",
+                                "item_id": message_id,
                                 "output_index": 0,
                                 "content_index": 0,
                                 "delta": content,
@@ -513,30 +602,74 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         function = call.get("function") or {}
                         if function.get("name"):
                             acc["name"] = function["name"]
-                        if function.get("arguments"):
-                            acc["arguments"] += function["arguments"]
+                        call_id = acc["id"] or f"call_{index}"
+                        if index not in tool_items_added and acc["name"]:
+                            tool_items_added.add(index)
+                            response_event(
+                                self,
+                                "response.output_item.added",
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": index,
+                                    "item": {
+                                        "type": "function_call",
+                                        "id": call_id,
+                                        "call_id": call_id,
+                                        "name": acc["name"],
+                                        "arguments": "",
+                                        "status": "in_progress",
+                                    },
+                                },
+                            )
+                        arguments_delta = function.get("arguments")
+                        if arguments_delta:
+                            acc["arguments"] += arguments_delta
+                            response_event(
+                                self,
+                                "response.function_call_arguments.delta",
+                                {
+                                    "type": "response.function_call_arguments.delta",
+                                    "item_id": call_id,
+                                    "output_index": index,
+                                    "delta": arguments_delta,
+                                },
+                            )
 
                     if choice.get("finish_reason") == "tool_calls":
-                        for acc in tool_calls.values():
+                        for index, acc in tool_calls.items():
                             call_id = acc["id"] or f"call_{uuid.uuid4().hex}"
+                            function_item = {
+                                "type": "function_call",
+                                "id": call_id,
+                                "call_id": call_id,
+                                "name": acc["name"] or "unknown_tool",
+                                "arguments": acc["arguments"],
+                                "status": "completed",
+                            }
+                            response_event(
+                                self,
+                                "response.function_call_arguments.done",
+                                {
+                                    "type": "response.function_call_arguments.done",
+                                    "item_id": call_id,
+                                    "output_index": index,
+                                    "arguments": acc["arguments"],
+                                },
+                            )
                             response_event(
                                 self,
                                 "response.output_item.done",
                                 {
                                     "type": "response.output_item.done",
-                                    "item": {
-                                        "type": "function_call",
-                                        "id": call_id,
-                                        "call_id": call_id,
-                                        "name": acc["name"] or "unknown_tool",
-                                        "arguments": acc["arguments"],
-                                    },
+                                    "output_index": index,
+                                    "item": function_item,
                                 },
                             )
-                        self.finish_completed(response_id, model)
+                            output_items.append(function_item)
+                        self.finish_completed(response_id, model, output_items)
                         self.close_connection = True
                         return
-            self.finish_response(response_id, model, "".join(output_text))
+            self.finish_response(response_id, model, message_id, "".join(output_text), output_items)
             self.close_connection = True
         except Exception as exc:
             response_event(
@@ -544,46 +677,67 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "response.failed",
                 {
                     "type": "response.failed",
-                    "response": {
-                        "id": response_id,
-                        "status": "failed",
-                        "error": {"message": f"LLM7 request failed: {exc}"},
-                    },
+                    "response": base_response(
+                        response_id,
+                        model,
+                        status="failed",
+                        output=output_items,
+                        error={"message": f"LLM7 request failed: {exc}"},
+                    ),
                 },
             )
             self.close_connection = True
 
-    def finish_response(self, response_id, model, text):
+    def finish_response(self, response_id, model, message_id, text, output_items):
         if text:
+            message_item = {
+                "type": "message",
+                "id": message_id,
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+            }
+            response_event(
+                self,
+                "response.output_text.done",
+                {
+                    "type": "response.output_text.done",
+                    "item_id": message_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "text": text,
+                },
+            )
+            response_event(
+                self,
+                "response.content_part.done",
+                {
+                    "type": "response.content_part.done",
+                    "item_id": message_id,
+                    "output_index": 0,
+                    "content_index": 0,
+                    "part": {"type": "output_text", "text": text},
+                },
+            )
             response_event(
                 self,
                 "response.output_item.done",
                 {
                     "type": "response.output_item.done",
-                    "item": {
-                        "type": "message",
-                        "id": "msg_0",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": text}],
-                    },
+                    "output_index": 0,
+                    "item": message_item,
                 },
             )
-        self.finish_completed(response_id, model)
+            output_items.append(message_item)
+        self.finish_completed(response_id, model, output_items)
 
-    def finish_completed(self, response_id, model):
+    def finish_completed(self, response_id, model, output_items=None):
         response_event(
             self,
             "response.completed",
             {
                 "type": "response.completed",
-                "response": {
-                    "id": response_id,
-                    "object": "response",
-                    "status": "completed",
-                    "model": model,
-                    "output": [],
-                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                },
+                "response": base_response(response_id, model, status="completed", output=output_items or []),
             },
         )
         self.close_connection = True
