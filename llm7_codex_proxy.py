@@ -26,6 +26,8 @@ LLM7_MODEL_ALIASES = tuple(
     if alias.strip()
 )
 AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
+AGENTIC_TOOL_PROMPT_MAX_TOOLS = int(os.environ.get("AGENTIC_TOOL_PROMPT_MAX_TOOLS", "20"))
+AGENTIC_TOOL_PROMPT_DESCRIPTIONS = os.environ.get("AGENTIC_TOOL_PROMPT_DESCRIPTIONS", "0").lower() in ("1", "true", "yes")
 LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 LLM7_TEXT_TOOL_FALLBACK = os.environ.get("LLM7_TEXT_TOOL_FALLBACK", "1").lower() not in ("0", "false", "no")
@@ -362,6 +364,9 @@ def build_agentic_tool_prompt(tools):
     if not tools or not AGENTIC_TOOL_PROMPT:
         return None
 
+    names = available_tool_names(tools)
+    shown_names = names[:AGENTIC_TOOL_PROMPT_MAX_TOOLS]
+    remaining = max(0, len(names) - len(shown_names))
     lines = [
         "You are running inside an agentic coding app. The app can access the user's project files and can run tools when you call them.",
         "Do not say you cannot access the project or tools just because you cannot access them directly in natural language.",
@@ -369,17 +374,16 @@ def build_agentic_tool_prompt(tools):
         "Do not describe a tool call in prose. Emit a real function/tool call using exactly one of the available tool names.",
         "Never invent tool names. For example, do not say you will use apply_patch unless apply_patch is listed below.",
         "If you need to create or edit files, use the listed tool that can run commands or modify files.",
-        "Available tools:",
+        "Available tool names: " + ", ".join(shown_names) + (f", and {remaining} more" if remaining else ""),
     ]
-    for tool in tools:
-        name = tool_name(tool)
-        if not name:
-            continue
-        description = tool_description(tool)
-        if description:
-            lines.append(f"- {name}: {description}")
-        else:
-            lines.append(f"- {name}")
+    if AGENTIC_TOOL_PROMPT_DESCRIPTIONS:
+        for tool in tools[:AGENTIC_TOOL_PROMPT_MAX_TOOLS]:
+            name = tool_name(tool)
+            if not name:
+                continue
+            description = tool_description(tool)[:120]
+            if description:
+                lines.append(f"- {name}: {description}")
     return "\n".join(lines)
 
 

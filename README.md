@@ -93,6 +93,10 @@ LLM7_MODEL_ALIASES    Extra comma-separated model names to show in /v1/models.
 PROXY_HOST            Local bind host. Defaults to 127.0.0.1.
 PROXY_PORT            Local bind port. Defaults to 5011.
 AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
+AGENTIC_TOOL_PROMPT_MAX_TOOLS
+                      Defaults to 20. Limits tool names shown in the extra hint.
+AGENTIC_TOOL_PROMPT_DESCRIPTIONS
+                      Defaults to 0. Set to 1 to include short tool descriptions in the hint.
 LLM7_SAFE_MODE        Defaults to 1. Sends only LLM7-safe chat parameters upstream.
 LLM7_EXTRA_BODY_PASSTHROUGH
                       Defaults to 0. Set to 1 only if your upstream supports extra OpenAI fields.
