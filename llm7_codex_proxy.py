@@ -31,6 +31,7 @@ AGENTIC_TOOL_PROMPT_DESCRIPTIONS = os.environ.get("AGENTIC_TOOL_PROMPT_DESCRIPTI
 LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 LLM7_TEXT_TOOL_FALLBACK = os.environ.get("LLM7_TEXT_TOOL_FALLBACK", "1").lower() not in ("0", "false", "no")
+LLM7_FORCE_COMMAND_FALLBACK = os.environ.get("LLM7_FORCE_COMMAND_FALLBACK", "1").lower() not in ("0", "false", "no")
 CODEX_PROXY_DEBUG = os.environ.get("CODEX_PROXY_DEBUG", "0").lower() in ("1", "true", "yes")
 CODEX_PROXY_DEBUG_DIR = Path(os.environ.get("CODEX_PROXY_DEBUG_DIR", "debug-dumps"))
 OPENAI_CLIENT = None
@@ -434,6 +435,46 @@ def parse_text_tool_call(text, tool_names):
         return {"name": name, "arguments": arguments}
 
     return None
+
+
+def command_tool_name(tool_names):
+    preferred = ("exec_command", "shell", "run_command", "command", "terminal")
+    for name in preferred:
+        if name in tool_names:
+            return name
+    for name in tool_names:
+        lowered = name.lower()
+        if "command" in lowered or "shell" in lowered or "terminal" in lowered or "exec" in lowered:
+            return name
+    return None
+
+
+def command_tool_arguments(tool_name_value, command):
+    lowered = tool_name_value.lower()
+    if tool_name_value == "exec_command":
+        return json.dumps({"cmd": command}, separators=(",", ":"))
+    if "shell" in lowered or "terminal" in lowered:
+        return json.dumps({"command": command}, separators=(",", ":"))
+    return json.dumps({"cmd": command, "command": command}, separators=(",", ":"))
+
+
+def should_force_command_tool(text):
+    if not LLM7_FORCE_COMMAND_FALLBACK or not text:
+        return False
+    lowered = text.lower()
+    intent_words = ("i'll", "i will", "let me", "let's", "i can", "i'm going to")
+    action_words = ("create", "make", "implement", "write", "run", "build", "inspect", "check")
+    return any(word in lowered for word in intent_words) and any(word in lowered for word in action_words)
+
+
+def forced_command_tool_call(text, tool_names):
+    if not should_force_command_tool(text):
+        return None
+    name = command_tool_name(tool_names)
+    if not name:
+        return None
+    command = "pwd && ls -la"
+    return {"name": name, "arguments": command_tool_arguments(name, command)}
 
 
 def responses_input_to_messages(request_body):
@@ -930,7 +971,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def finish_response(self, response_id, model, message_id, text, output_items, tool_names=None):
-        parsed_tool_call = parse_text_tool_call(text, tool_names or [])
+        parsed_tool_call = parse_text_tool_call(text, tool_names or []) or forced_command_tool_call(text, tool_names or [])
         if parsed_tool_call:
             call_id = f"call_{uuid.uuid4().hex}"
             function_item = {

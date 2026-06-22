@@ -102,6 +102,8 @@ LLM7_EXTRA_BODY_PASSTHROUGH
                       Defaults to 0. Set to 1 only if your upstream supports extra OpenAI fields.
 LLM7_TEXT_TOOL_FALLBACK
                       Defaults to 1. Converts JSON text tool calls into real Codex function calls.
+LLM7_FORCE_COMMAND_FALLBACK
+                      Defaults to 1. If the model promises action but emits no tool call, starts with a safe command-tool inspection.
 CODEX_PROXY_DEBUG     Defaults to 0. Set to 1 to save sanitized incoming/upstream JSON dumps.
 CODEX_PROXY_DEBUG_DIR Defaults to debug-dumps.
 ```
