@@ -919,6 +919,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                                 "arguments": acc["arguments"],
                                 "status": "completed",
                             }
+                            debug_dump("outgoing-tool-call", function_item)
                             response_event(
                                 self,
                                 "response.function_call_arguments.done",
@@ -957,6 +958,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         "arguments": acc["arguments"],
                         "status": "completed",
                     }
+                    debug_dump("outgoing-tool-call-after-error", function_item)
                     response_event(
                         self,
                         "response.function_call_arguments.done",
@@ -1002,6 +1004,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     ),
                 },
             )
+            debug_dump(
+                "outgoing-failed",
+                {
+                    "response_id": response_id,
+                    "model": model,
+                    "error": f"LLM7 request failed: {exc}",
+                    "output": output_items,
+                },
+            )
             self.close_connection = True
 
     def finish_response(self, response_id, model, message_id, text, output_items, tool_names=None):
@@ -1017,6 +1028,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "arguments": parsed_tool_call["arguments"],
                 "status": "completed",
             }
+            debug_dump("outgoing-tool-call-fallback", {"source_text": text, "item": function_item})
             response_event(
                 self,
                 "response.output_item.added",
@@ -1071,6 +1083,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": text}],
             }
+            debug_dump("outgoing-message", message_item)
             response_event(
                 self,
                 "response.output_text.done",
