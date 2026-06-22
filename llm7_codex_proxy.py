@@ -4,6 +4,7 @@ import time
 import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 try:
     from openai import OpenAI
@@ -18,10 +19,34 @@ DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_LLM7_MODEL = "default"
 LLM7_MODEL = os.environ.get("LLM7_MODEL", DEFAULT_LLM7_MODEL)
 LLM7_API_KEY = os.environ.get("LLM7_API_KEY", "unused")
+LLM7_MODEL_ALIASES = tuple(
+    alias.strip()
+    for alias in os.environ.get("LLM7_MODEL_ALIASES", "").split(",")
+    if alias.strip()
+)
 AGENTIC_TOOL_PROMPT = os.environ.get("AGENTIC_TOOL_PROMPT", "1").lower() not in ("0", "false", "no")
 LLM7_SAFE_MODE = os.environ.get("LLM7_SAFE_MODE", "1").lower() not in ("0", "false", "no")
 LLM7_EXTRA_BODY_PASSTHROUGH = os.environ.get("LLM7_EXTRA_BODY_PASSTHROUGH", "0").lower() in ("1", "true", "yes")
 OPENAI_CLIENT = None
+
+LLM7_NATIVE_MODELS = ("default", "fast", "pro")
+OPENAI_ALIAS_MODELS = (
+    DEFAULT_MODEL,
+    "gpt-5",
+    "gpt-5-codex",
+    "gpt-5.1",
+    "gpt-5.1-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    "o3",
+    "o3-mini",
+    "o4-mini",
+    "codex-mini-latest",
+)
 
 CHAT_PASSTHROUGH_KEYS = (
     "audio",
@@ -113,13 +138,44 @@ def now_unix():
 
 
 def upstream_model(model):
-    if not model or str(model).startswith("gpt-"):
+    if not model:
         return LLM7_MODEL
-    return model
+    if str(model) in LLM7_NATIVE_MODELS:
+        return str(model)
+    return LLM7_MODEL
+
+
+def model_ids():
+    seen = set()
+    models = []
+    for model in (*LLM7_NATIVE_MODELS, *OPENAI_ALIAS_MODELS, *LLM7_MODEL_ALIASES):
+        if model and model not in seen:
+            seen.add(model)
+            models.append(model)
+    return models
 
 
 def valid_model(model):
-    return model in ("default", "fast", "pro", DEFAULT_MODEL) or str(model).startswith("gpt-5")
+    if model is None:
+        return True
+    model = str(model).strip()
+    if not model:
+        return True
+    if model in LLM7_NATIVE_MODELS or model in OPENAI_ALIAS_MODELS or model in LLM7_MODEL_ALIASES:
+        return True
+    if model.startswith(("gpt-", "o", "codex-")):
+        return True
+    return False
+
+
+def model_error_message():
+    return "Use default, fast, pro, a GPT/O/Codex model alias, or add aliases with LLM7_MODEL_ALIASES."
+
+
+def model_to_response_id(model):
+    if not model:
+        return DEFAULT_MODEL
+    return str(model)
 
 
 def openai_client():
@@ -484,7 +540,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/health":
+        path = urlparse(self.path).path
+        if path == "/health":
             return json_response(
                 self,
                 200,
@@ -492,21 +549,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "status": "healthy",
                     "service": "llm7-codex-python-proxy",
                     "upstream": LLM7_BASE_URL,
-                    "default_model": LLM7_MODEL,
+                    "codex_default_model": DEFAULT_MODEL,
+                    "upstream_model": LLM7_MODEL,
                 },
             )
 
-        if self.path == "/v1/models":
+        if path == "/v1/models":
             return json_response(
                 self,
                 200,
                 {
                     "object": "list",
                     "data": [
-                        {"id": "default", "object": "model", "created": now_unix(), "owned_by": "llm7"},
-                        {"id": "fast", "object": "model", "created": now_unix(), "owned_by": "llm7"},
-                        {"id": "pro", "object": "model", "created": now_unix(), "owned_by": "llm7"},
-                        {"id": DEFAULT_MODEL, "object": "model", "created": now_unix(), "owned_by": "llm7"},
+                        {"id": model, "object": "model", "created": now_unix(), "owned_by": "llm7"}
+                        for model in model_ids()
                     ],
                 },
             )
@@ -534,7 +590,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return json_response(
                 self,
                 404,
-                {"error": {"message": "Use model gpt-5.5, default, fast, pro, or gpt-5* alias."}},
+                {"error": {"message": model_error_message()}},
             )
 
         payload = build_chat_payload(body)
@@ -557,7 +613,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return json_response(
                 self,
                 404,
-                {"error": {"message": "Use model gpt-5.5, default, fast, pro, or gpt-5* alias."}},
+                {"error": {"message": model_error_message()}},
             )
 
         payload = build_responses_chat_payload(body)

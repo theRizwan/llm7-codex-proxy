@@ -89,6 +89,7 @@ http://127.0.0.1:5011
 LLM7_API_KEY          LLM7 token. Defaults to unused.
 LLM7_BASE_URL         LLM7 base URL. Defaults to https://api.llm7.io/v1.
 LLM7_MODEL            Upstream LLM7 model for GPT aliases. Defaults to default.
+LLM7_MODEL_ALIASES    Extra comma-separated model names to show in /v1/models.
 PROXY_HOST            Local bind host. Defaults to 127.0.0.1.
 PROXY_PORT            Local bind port. Defaults to 5011.
 AGENTIC_TOOL_PROMPT   Set to 0 to disable the extra tool-awareness system hint.
@@ -98,3 +99,5 @@ LLM7_EXTRA_BODY_PASSTHROUGH
 ```
 
 Codex can use `model = "gpt-5.5"`, but the proxy sends GPT-style model aliases upstream as the LLM7 model in `LLM7_MODEL`. By default that upstream model is `default`, because many LLM7-compatible endpoints reject raw GPT model IDs with a 400.
+
+The proxy advertises common GPT/O/Codex dropdown aliases from `/v1/models`. Any alias that is not one of LLM7's native `default`, `fast`, or `pro` models is mapped upstream to `LLM7_MODEL`.
