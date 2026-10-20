@@ -129,3 +129,30 @@ python llm7_codex_proxy.py
 ```
 
 Do not publish these dumps because prompts and project context may still be present.
+
+## Optional Provider: Nanobridge
+
+The proxy can also point at [Nanobridge](https://nanobridge.ai/), an OpenAI-compatible gateway that gives one API key for DeepSeek, Kimi, GLM, MiniMax and other models. New accounts get free credits to test with.
+
+1. Sign up at `https://nanobridge.ai/` and create a key on the **API Keys** page.
+
+2. Start the proxy with Nanobridge as the upstream:
+
+```bat
+set LLM7_BASE_URL=https://api.nanobridge.net/v1
+set LLM7_API_KEY=your_nanobridge_key_here
+set LLM7_MODEL=deepseek-v4.1-flash
+python llm7_codex_proxy.py
+```
+
+Keep the same Codex `config.toml` from the setup above. Codex's `gpt-5.5` alias is sent upstream as `LLM7_MODEL`.
+
+Pick the base URL closest to you:
+
+```txt
+Europe         https://api.nanobridge.net/v1
+Asia           https://api-sg.nanobridge.net/v1
+United States  https://api-us.nanobridge.net/v1
+```
+
+Other model IDs you can set in `LLM7_MODEL` include `deepseek-v4-pro-202606`, `glm-5.3`, `glm-5.1`, `minimax-m3`, `minimax-m2.7` and `kimi-k3`. See the full list and pricing in the [Nanobridge API docs](https://platform.nanobridge.net/api-docs).
