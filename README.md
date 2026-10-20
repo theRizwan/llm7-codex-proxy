@@ -156,3 +156,18 @@ United States  https://api-us.nanobridge.net/v1
 ```
 
 Other model IDs you can set in `LLM7_MODEL` include `deepseek-v4-pro-202606`, `glm-5.3`, `glm-5.1`, `minimax-m3`, `minimax-m2.7` and `kimi-k3`. See the full list and pricing in the [Nanobridge API docs](https://platform.nanobridge.net/api-docs).
+
+## Optional: Connect Nanobridge
+
+You can also connect [Nanobridge](https://nanobridge.ai/) instead of LLM7. It gives one API key for DeepSeek, Kimi, GLM, MiniMax and other models, and new accounts get free credits.
+
+Create a key at `https://nanobridge.ai/`, then start the proxy with:
+
+```bat
+set LLM7_BASE_URL=https://api.nanobridge.net/v1
+set LLM7_API_KEY=your_nanobridge_key_here
+set LLM7_MODEL=deepseek-v4.1-flash
+python llm7_codex_proxy.py
+```
+
+Your Codex `config.toml` stays the same. See the [Nanobridge API docs](https://platform.nanobridge.net/api-docs) for other models and regional URLs.
